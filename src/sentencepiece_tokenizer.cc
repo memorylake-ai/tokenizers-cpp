@@ -3,17 +3,13 @@
  * \file sentencepiece_tokenizer.cc
  * \brief Sentencepice tokenizer
  */
+#include <sentencepiece_processor.h>
 #include <tokenizers_cpp.h>
 
 #include <cassert>
 
-#ifdef MLC_ENABLE_SENTENCEPIECE_TOKENIZER
-#include <sentencepiece_processor.h>
-#endif
-
 namespace tokenizers {
 
-#ifdef MLC_ENABLE_SENTENCEPIECE_TOKENIZER
 class SentencePieceTokenizer : public Tokenizer {
  public:
   explicit SentencePieceTokenizer(const std::string& model_blob) {
@@ -50,11 +46,5 @@ class SentencePieceTokenizer : public Tokenizer {
 std::unique_ptr<Tokenizer> Tokenizer::FromBlobSentencePiece(const std::string& model_blob) {
   return std::make_unique<SentencePieceTokenizer>(model_blob);
 }
-#else
-std::unique_ptr<Tokenizer> Tokenizer::FromBlobSentencePiece(const std::string& model_blob) {
-  (void)model_blob;
-  return nullptr;
-}
-#endif  // MLC_ENABLE_SENTENCEPIECE_TOKENIZER
 
 }  // namespace tokenizers

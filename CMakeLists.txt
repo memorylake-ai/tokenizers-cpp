@@ -172,10 +172,14 @@ add_custom_command(
 
 set(
   TOKENIZER_CPP_SRCS
-  src/sentencepiece_tokenizer.cc
   src/huggingface_tokenizer.cc
   src/rwkv_world_tokenizer.cc
 )
+if(MLC_ENABLE_SENTENCEPIECE_TOKENIZER)
+  list(APPEND TOKENIZER_CPP_SRCS src/sentencepiece_tokenizer.cc)
+else()
+  list(APPEND TOKENIZER_CPP_SRCS src/sentencepiece_tokenizer_disabled.cc)
+endif()
 add_library(tokenizers_cpp STATIC ${TOKENIZER_CPP_SRCS})
 target_include_directories(tokenizers_cpp PRIVATE msgpack/include)
 target_include_directories(tokenizers_cpp PUBLIC ${TOKENIZERS_CPP_INCLUDE})
