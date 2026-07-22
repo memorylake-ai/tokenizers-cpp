@@ -151,6 +151,10 @@ find_program(CARGO_EXECUTABLE cargo
  PATH_SUFFIXES "bin")
 mark_as_advanced(CARGO_EXECUTABLE)
 
+if(NOT CARGO_EXECUTABLE)
+  message(FATAL_ERROR "tokenizers-cpp requires Cargo; install a Rust toolchain or set CARGO_HOME")
+endif()
+
 # NOTE: need to use cmake -E env to be portable in win
 add_custom_command(
   OUTPUT ${TOKENIZERS_RUST_LIB}
@@ -159,9 +163,9 @@ add_custom_command(
   CARGO_TARGET_DIR=${TOKENIZERS_CPP_CARGO_TARGET_DIR}
   ${CARGO_EXTRA_ENVS}
   RUSTFLAGS="${TOKENIZERS_CPP_RUST_FLAGS}"
-  ${CARGO_EXECUTABLE} build ${TOKENIZERS_CPP_CARGO_FLAGS}
+  ${CARGO_EXECUTABLE} build --locked ${TOKENIZERS_CPP_CARGO_FLAGS}
   WORKING_DIRECTORY ${TOKENIZERS_CPP_CARGO_SOURCE_PATH}
-  POST_BUILD COMMAND
+  COMMAND
   ${CMAKE_COMMAND} -E copy
   ${TOKENIZERS_RUST_LIB} "${CMAKE_CURRENT_BINARY_DIR}"
 )
@@ -173,30 +177,31 @@ set(
   src/rwkv_world_tokenizer.cc
 )
 add_library(tokenizers_cpp STATIC ${TOKENIZER_CPP_SRCS})
-target_include_directories(tokenizers_cpp PRIVATE sentencepiece/src)
 target_include_directories(tokenizers_cpp PRIVATE msgpack/include)
 target_include_directories(tokenizers_cpp PUBLIC ${TOKENIZERS_CPP_INCLUDE})
-if (MLC_ENABLE_SENTENCEPIECE_TOKENIZER STREQUAL "ON")
-    target_compile_definitions(tokenizers_cpp PUBLIC MLC_ENABLE_SENTENCEPIECE_TOKENIZER)
-endif ()
 target_link_libraries(tokenizers_cpp PRIVATE msgpack-cxx)
 
-# sentencepiece config
-option(SPM_ENABLE_SHARED "override sentence piece config" OFF)
-option(SPM_ENABLE_TCMALLOC "" OFF)
-# provide macro if it does not exist in cmake system
-# it is OK to skip those since we do not provide these apps in the ios
-# instead just link to the sentencepiece directly
-if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
-  macro (set_xcode_property TARGET XCODE_PROPERTY XCODE_VALUE)
-      set_property (TARGET ${TARGET} PROPERTY
-          XCODE_ATTRIBUTE_${XCODE_PROPERTY} ${XCODE_VALUE})
-  endmacro (set_xcode_property)
+if(MLC_ENABLE_SENTENCEPIECE_TOKENIZER)
+  target_compile_definitions(tokenizers_cpp PRIVATE MLC_ENABLE_SENTENCEPIECE_TOKENIZER)
+  target_include_directories(tokenizers_cpp PRIVATE sentencepiece/src)
+
+  # sentencepiece config
+  option(SPM_ENABLE_SHARED "override sentence piece config" OFF)
+  option(SPM_ENABLE_TCMALLOC "" OFF)
+  # provide macro if it does not exist in cmake system
+  # it is OK to skip those since we do not provide these apps in the ios
+  # instead just link to the sentencepiece directly
+  if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    macro(set_xcode_property TARGET XCODE_PROPERTY XCODE_VALUE)
+      set_property(TARGET ${TARGET} PROPERTY XCODE_ATTRIBUTE_${XCODE_PROPERTY} ${XCODE_VALUE})
+    endmacro()
+  endif()
+  add_subdirectory(sentencepiece sentencepiece EXCLUDE_FROM_ALL)
+  target_link_libraries(tokenizers_cpp PRIVATE sentencepiece-static)
 endif()
-add_subdirectory(sentencepiece sentencepiece EXCLUDE_FROM_ALL)
 
 add_library(tokenizers_c INTERFACE ${TOKENIZERS_RUST_LIB})
 target_link_libraries(tokenizers_c INTERFACE ${TOKENIZERS_RUST_LIB} ${TOKENIZERS_C_LINK_LIBS})
 
-target_link_libraries(tokenizers_cpp PRIVATE tokenizers_c sentencepiece-static ${TOKENIZERS_CPP_LINK_LIBS})
+target_link_libraries(tokenizers_cpp PRIVATE tokenizers_c ${TOKENIZERS_CPP_LINK_LIBS})
 target_include_directories(tokenizers_cpp PUBLIC ${TOKENIZERS_CPP_INCLUDE})
