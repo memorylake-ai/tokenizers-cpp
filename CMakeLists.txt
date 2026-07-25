@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19...3.30)
-project(tokenizers_cpp C CXX)
+project(tokenizers_cpp VERSION 0.1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -126,10 +126,13 @@ add_subdirectory(msgpack)
 option(MLC_ENABLE_SENTENCEPIECE_TOKENIZER "Enable SentencePiece tokenizer" ON)
 
 if(WIN32)
-  set(TOKENIZERS_RUST_LIB "${TOKENIZERS_CPP_CARGO_BINARY_DIR}/tokenizers_c.lib")
+  set(TOKENIZERS_RUST_CARGO_LIB "${TOKENIZERS_CPP_CARGO_BINARY_DIR}/tokenizers_c.lib")
+  set(TOKENIZERS_RUST_LIB "${CMAKE_CURRENT_BINARY_DIR}/tokenizers_c.lib")
 else()
-  set(TOKENIZERS_RUST_LIB "${TOKENIZERS_CPP_CARGO_BINARY_DIR}/libtokenizers_c.a")
+  set(TOKENIZERS_RUST_CARGO_LIB "${TOKENIZERS_CPP_CARGO_BINARY_DIR}/libtokenizers_c.a")
+  set(TOKENIZERS_RUST_LIB "${CMAKE_CURRENT_BINARY_DIR}/libtokenizers_c.a")
 endif()
+get_filename_component(TOKENIZERS_RUST_LIB_NAME "${TOKENIZERS_RUST_LIB}" NAME)
 set(TOKENIZERS_CPP_INCLUDE ${TOKENIZERS_CPP_ROOT}/include)
 
 # Find cargo executable
@@ -155,6 +158,8 @@ if(NOT CARGO_EXECUTABLE)
   message(FATAL_ERROR "tokenizers-cpp requires Cargo; install a Rust toolchain or set CARGO_HOME")
 endif()
 
+list(JOIN TOKENIZERS_CPP_RUST_FLAGS " " TOKENIZERS_CPP_RUST_FLAGS_STRING)
+
 # NOTE: need to use cmake -E env to be portable in win
 add_custom_command(
   OUTPUT ${TOKENIZERS_RUST_LIB}
@@ -162,12 +167,26 @@ add_custom_command(
   ${CMAKE_COMMAND} -E env
   CARGO_TARGET_DIR=${TOKENIZERS_CPP_CARGO_TARGET_DIR}
   ${CARGO_EXTRA_ENVS}
-  RUSTFLAGS="${TOKENIZERS_CPP_RUST_FLAGS}"
+  MAKEFLAGS=
+  RUSTFLAGS=${TOKENIZERS_CPP_RUST_FLAGS_STRING}
   ${CARGO_EXECUTABLE} build --locked ${TOKENIZERS_CPP_CARGO_FLAGS}
   WORKING_DIRECTORY ${TOKENIZERS_CPP_CARGO_SOURCE_PATH}
   COMMAND
-  ${CMAKE_COMMAND} -E copy
-  ${TOKENIZERS_RUST_LIB} "${CMAKE_CURRENT_BINARY_DIR}"
+  ${CMAKE_COMMAND} -E copy_if_different
+  ${TOKENIZERS_RUST_CARGO_LIB} ${TOKENIZERS_RUST_LIB}
+  VERBATIM
+)
+add_custom_target(tokenizers_c_build DEPENDS ${TOKENIZERS_RUST_LIB})
+
+# Model the Rust static library as a target so downstream users receive its
+# complete platform link interface rather than having to assemble archives.
+add_library(tokenizers_cpp::tokenizers_c STATIC IMPORTED GLOBAL)
+add_library(tokenizers_c ALIAS tokenizers_cpp::tokenizers_c)
+set_target_properties(
+  tokenizers_cpp::tokenizers_c
+  PROPERTIES
+    IMPORTED_LOCATION "${TOKENIZERS_RUST_LIB}"
+    INTERFACE_LINK_LIBRARIES "${TOKENIZERS_C_LINK_LIBS}"
 )
 
 set(
@@ -181,8 +200,18 @@ else()
   list(APPEND TOKENIZER_CPP_SRCS src/sentencepiece_tokenizer_disabled.cc)
 endif()
 add_library(tokenizers_cpp STATIC ${TOKENIZER_CPP_SRCS})
+add_library(tokenizers_cpp::tokenizers_cpp ALIAS tokenizers_cpp)
+add_dependencies(tokenizers_cpp tokenizers_c_build)
+# The installed static archive is consumed by shared libraries such as yallm,
+# so it must not depend on a parent project enabling PIC globally.
+set_target_properties(tokenizers_cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(tokenizers_cpp PRIVATE msgpack/include)
-target_include_directories(tokenizers_cpp PUBLIC ${TOKENIZERS_CPP_INCLUDE})
+target_include_directories(
+  tokenizers_cpp
+  PUBLIC
+    $<BUILD_INTERFACE:${TOKENIZERS_CPP_INCLUDE}>
+    $<INSTALL_INTERFACE:include>
+)
 target_link_libraries(tokenizers_cpp PRIVATE msgpack-cxx)
 
 if(MLC_ENABLE_SENTENCEPIECE_TOKENIZER)
@@ -204,8 +233,60 @@ if(MLC_ENABLE_SENTENCEPIECE_TOKENIZER)
   target_link_libraries(tokenizers_cpp PRIVATE sentencepiece-static)
 endif()
 
-add_library(tokenizers_c INTERFACE ${TOKENIZERS_RUST_LIB})
-target_link_libraries(tokenizers_c INTERFACE ${TOKENIZERS_RUST_LIB} ${TOKENIZERS_C_LINK_LIBS})
+target_link_libraries(
+  tokenizers_cpp
+  PRIVATE
+    tokenizers_cpp::tokenizers_c
+    ${TOKENIZERS_CPP_LINK_LIBS}
+)
 
-target_link_libraries(tokenizers_cpp PRIVATE tokenizers_c ${TOKENIZERS_CPP_LINK_LIBS})
-target_include_directories(tokenizers_cpp PUBLIC ${TOKENIZERS_CPP_INCLUDE})
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+set(TOKENIZERS_CPP_INSTALL_CMAKEDIR
+    "${CMAKE_INSTALL_LIBDIR}/cmake/tokenizers_cpp"
+    CACHE STRING
+    "Directory for the tokenizers-cpp CMake package")
+
+install(
+  TARGETS tokenizers_cpp
+  EXPORT tokenizers_cpp-targets
+  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+)
+install(
+  FILES
+    "${TOKENIZERS_CPP_INCLUDE}/tokenizers_c.h"
+    "${TOKENIZERS_CPP_INCLUDE}/tokenizers_cpp.h"
+  DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+)
+install(
+  FILES "${TOKENIZERS_RUST_LIB}"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+)
+install(
+  EXPORT tokenizers_cpp-targets
+  FILE tokenizers_cpp-targets.cmake
+  NAMESPACE tokenizers_cpp::
+  DESTINATION "${TOKENIZERS_CPP_INSTALL_CMAKEDIR}"
+)
+
+configure_package_config_file(
+  cmake/tokenizers_cpp-config.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/tokenizers_cpp-config.cmake"
+  INSTALL_DESTINATION "${TOKENIZERS_CPP_INSTALL_CMAKEDIR}"
+  PATH_VARS
+    CMAKE_INSTALL_INCLUDEDIR
+    CMAKE_INSTALL_LIBDIR
+)
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/tokenizers_cpp-config-version.cmake"
+  VERSION "${PROJECT_VERSION}"
+  COMPATIBILITY SameMajorVersion
+)
+install(
+  FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/tokenizers_cpp-config.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/tokenizers_cpp-config-version.cmake"
+  DESTINATION "${TOKENIZERS_CPP_INSTALL_CMAKEDIR}"
+)
