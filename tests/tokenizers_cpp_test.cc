@@ -1,9 +1,14 @@
 #include <tokenizers_cpp.h>
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <future>
 #include <iostream>
+#include <random>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -135,6 +140,39 @@ std::vector<int32_t> Concatenate(const std::vector<int32_t>& lhs, const std::vec
   return result;
 }
 
+// RWKV's factory currently consumes a model path. This fixture owns a minimal msgpack vocabulary
+// for the duration of the unsupported-policy checks and removes it on every exit path.
+class RwkvModelFile {
+ public:
+  RwkvModelFile() {
+    const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const uint32_t nonce = std::random_device{}();
+    path_ = std::filesystem::temp_directory_path() /
+            ("tokenizers_cpp_rwkv_" + std::to_string(timestamp) + "_" + std::to_string(nonce));
+
+    // msgpack map {0: "a", 1: "b"} is enough for deterministic default encoding of "ab".
+    constexpr unsigned char kModel[] = {0x82, 0x00, 0xa1, 'a', 0x01, 0xa1, 'b'};
+    std::ofstream output(path_, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(kModel), sizeof(kModel));
+    if (!output) {
+      throw std::runtime_error("Failed to write temporary RWKV tokenizer model");
+    }
+  }
+
+  RwkvModelFile(const RwkvModelFile&) = delete;
+  RwkvModelFile& operator=(const RwkvModelFile&) = delete;
+
+  ~RwkvModelFile() {
+    std::error_code error;
+    std::filesystem::remove(path_, error);
+  }
+
+  const std::filesystem::path& path() const { return path_; }
+
+ private:
+  std::filesystem::path path_;
+};
+
 void TestFlagSemantics() {
   std::unique_ptr<Tokenizer> tokenizer = Tokenizer::FromBlobJSON(kTokenizerJson);
 
@@ -221,6 +259,20 @@ void TestErrorsAndStateIsolation() {
         static_cast<void>(byte_bpe->EncodeBatch({"a"}, Options(EncodeFlags::kIgnoreAddedTokens)));
       },
       TokenizerErrorCode::kUnsupportedOperation, "non-JSON backend rejects batch ignore flags");
+
+  RwkvModelFile rwkv_model;
+  std::unique_ptr<Tokenizer> rwkv = Tokenizer::FromBlobRWKVWorld(rwkv_model.path().string());
+  ExpectEqual(rwkv->Encode("ab"), std::vector<int32_t>{0, 1}, "default RWKV encoding");
+  ExpectEqual(rwkv->EncodeBatch({"ab", "a"}), std::vector<std::vector<int32_t>>{{0, 1}, {0}},
+              "default RWKV batch encoding");
+  ExpectTokenizerError(
+      [&] { static_cast<void>(rwkv->Encode("a", Options(EncodeFlags::kIgnoreSpecialTokens))); },
+      TokenizerErrorCode::kUnsupportedOperation, "RWKV rejects ignore-special flag");
+  ExpectTokenizerError(
+      [&] {
+        static_cast<void>(rwkv->EncodeBatch({"a"}, Options(EncodeFlags::kIgnoreAddedTokens)));
+      },
+      TokenizerErrorCode::kUnsupportedOperation, "RWKV rejects batch ignore-added flag");
 }
 
 void TestConcurrentPolicies() {
