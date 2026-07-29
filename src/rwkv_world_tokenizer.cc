@@ -27,7 +27,7 @@ struct TrieTree {
     std::string prefix;
     int token_id = -1;
     const TrieTree* node = this;
-    for (int i = 0; i < str.size(); ++i) {
+    for (size_t i = 0; i < str.size(); ++i) {
       auto it = node->children.find(str[i]);
       if (it == node->children.end()) {
         break;
@@ -47,7 +47,7 @@ struct TrieTree {
  private:
   TrieTree() = default;
   void add_word(const std::string& word, int token_id) { return _add_word(word, token_id, 0); }
-  void _add_word(const std::string& word, int token_id, int idx) {
+  void _add_word(const std::string& word, int token_id, size_t idx) {
     if (idx == word.size()) {
       this->word = word;
       this->token_id = token_id;
@@ -83,9 +83,12 @@ class RWKVWorldTokenizer : public Tokenizer {
     _tree = std::make_unique<TrieTree>(_word2idx);
   }
 
-  std::vector<int32_t> Encode(const std::string& str) final {
+  std::vector<int32_t> EncodeImpl(const std::string& str,
+                                  const EncodeOptions& options) const final {
+    // RWKV has no added-vocabulary layer. Common dispatch rejects any non-default ignore policy.
+    (void)options;
     std::vector<int> ids;
-    int str_idx = 0;
+    size_t str_idx = 0;
 
     while (str_idx < str.size()) {
       auto [prefix, token_id] = _tree->find_longest_prefix(str.substr(str_idx));

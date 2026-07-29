@@ -163,6 +163,10 @@ list(JOIN TOKENIZERS_CPP_RUST_FLAGS " " TOKENIZERS_CPP_RUST_FLAGS_STRING)
 # NOTE: need to use cmake -E env to be portable in win
 add_custom_command(
   OUTPUT ${TOKENIZERS_RUST_LIB}
+  DEPENDS
+  ${TOKENIZERS_CPP_CARGO_SOURCE_PATH}/Cargo.toml
+  ${TOKENIZERS_CPP_CARGO_SOURCE_PATH}/Cargo.lock
+  ${TOKENIZERS_CPP_CARGO_SOURCE_PATH}/src/lib.rs
   COMMAND
   ${CMAKE_COMMAND} -E env
   CARGO_TARGET_DIR=${TOKENIZERS_CPP_CARGO_TARGET_DIR}
@@ -191,6 +195,7 @@ set_target_properties(
 
 set(
   TOKENIZER_CPP_SRCS
+  src/tokenizer.cc
   src/huggingface_tokenizer.cc
   src/rwkv_world_tokenizer.cc
 )
@@ -239,6 +244,15 @@ target_link_libraries(
     tokenizers_cpp::tokenizers_c
     ${TOKENIZERS_CPP_LINK_LIBS}
 )
+
+option(TOKENIZERS_CPP_BUILD_TESTS "Build tokenizers-cpp self-contained tests" OFF)
+if(TOKENIZERS_CPP_BUILD_TESTS)
+  enable_testing()
+  find_package(Threads REQUIRED)
+  add_executable(tokenizers_cpp_tests tests/tokenizers_cpp_test.cc)
+  target_link_libraries(tokenizers_cpp_tests PRIVATE tokenizers_cpp Threads::Threads)
+  add_test(NAME tokenizers_cpp_tests COMMAND tokenizers_cpp_tests)
+endif()
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

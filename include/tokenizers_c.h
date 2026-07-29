@@ -16,24 +16,72 @@ extern "C" {
 
 typedef void* TokenizerHandle;
 
+/*! \brief Status returned by failable tokenizer C API calls. */
+typedef enum {
+  TOKENIZERS_STATUS_OK = 0,
+  TOKENIZERS_STATUS_INVALID_ARGUMENT = 1,
+  TOKENIZERS_STATUS_UNSUPPORTED = 2,
+  TOKENIZERS_STATUS_INTERNAL = 3,
+} TokenizerStatus;
+
+typedef uint32_t TokenizerEncodeFlags;
+
+/*! \brief Preserve recognition of every configured added token. */
+#define TOKENIZERS_ENCODE_FLAG_NONE ((TokenizerEncodeFlags)0)
+/*! \brief Encode added tokens marked special as ordinary input text. */
+#define TOKENIZERS_ENCODE_FLAG_IGNORE_SPECIAL_TOKENS ((TokenizerEncodeFlags)1 << 0)
+/*! \brief Encode every added token as ordinary input text. */
+#define TOKENIZERS_ENCODE_FLAG_IGNORE_ADDED_TOKENS ((TokenizerEncodeFlags)1 << 1)
+
+/*! \brief Rust-owned token IDs returned by an encode call. */
 typedef struct {
-    int* token_ids;
-    size_t len;
+  uint32_t* token_ids;
+  size_t len;
 } TokenizerEncodeResult;
 
-TokenizerHandle tokenizers_new_from_str(const char* json, size_t len);
+/*! \brief Rust-owned error text returned when a failable call does not succeed. */
+typedef struct {
+  char* data;
+  size_t len;
+} TokenizerErrorMessage;
 
-TokenizerHandle byte_level_bpe_tokenizers_new_from_str(const char* vocab, size_t vocab_len,
+/*!
+ * \brief Construct a Hugging Face JSON tokenizer.
+ *
+ * On success, ownership of out_handle passes to the caller. On failure, out_error must be released
+ * with tokenizers_free_error_message.
+ */
+TokenizerStatus tokenizers_new_from_str(const char* json, size_t len, TokenizerHandle* out_handle,
+                                        TokenizerErrorMessage* out_error);
+
+TokenizerStatus byte_level_bpe_tokenizers_new_from_str(const char* vocab, size_t vocab_len,
                                                        const char* merges, size_t merges_len,
                                                        const char* added_tokens,
-                                                       size_t added_tokens_len);
+                                                       size_t added_tokens_len,
+                                                       TokenizerHandle* out_handle,
+                                                       TokenizerErrorMessage* out_error);
 
-void tokenizers_encode(TokenizerHandle handle, const char* data, size_t len, int add_special_token, TokenizerEncodeResult* result);
+/*!
+ * \brief Encode one UTF-8 string with per-call post-processing and added-token controls.
+ *
+ * The caller releases a successful out_result with tokenizers_free_encode_results and a failed
+ * out_error with tokenizers_free_error_message.
+ */
+TokenizerStatus tokenizers_encode(TokenizerHandle handle, const char* data, size_t len,
+                                  int add_special_tokens, TokenizerEncodeFlags flags,
+                                  TokenizerEncodeResult* out_result,
+                                  TokenizerErrorMessage* out_error);
 
-void tokenizers_encode_batch(TokenizerHandle handle, const char** data, size_t* len, size_t num_seqs,
-                                 int add_special_token, TokenizerEncodeResult* results);
+/*! \brief Encode a batch using one common set of flags for every sequence. */
+TokenizerStatus tokenizers_encode_batch(TokenizerHandle handle, const char* const* data,
+                                        const size_t* len, size_t num_seqs, int add_special_tokens,
+                                        TokenizerEncodeFlags flags,
+                                        TokenizerEncodeResult* out_results,
+                                        TokenizerErrorMessage* out_error);
 
 void tokenizers_free_encode_results(TokenizerEncodeResult* results, size_t num_seqs);
+
+void tokenizers_free_error_message(TokenizerErrorMessage* error);
 
 void tokenizers_decode(TokenizerHandle handle, const uint32_t* data, size_t len,
                        int skip_special_token);

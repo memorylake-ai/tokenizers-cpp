@@ -6,11 +6,68 @@
 #ifndef TOKENIZERS_CPP_H_
 #define TOKENIZERS_CPP_H_
 
+#include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace tokenizers {
+
+/*!
+ * \brief Flags controlling how input added tokens participate in encoding.
+ *
+ * These flags affect only recognition of token text already present in the input. They are
+ * independent from EncodeOptions::add_special_tokens, which controls post-processing.
+ */
+enum class EncodeFlags : uint32_t {
+  kNone = 0,
+  kIgnoreSpecialTokens = 1U << 0,
+  kIgnoreAddedTokens = 1U << 1,
+};
+
+constexpr EncodeFlags operator|(EncodeFlags lhs, EncodeFlags rhs) {
+  return static_cast<EncodeFlags>(static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs));
+}
+
+constexpr EncodeFlags operator&(EncodeFlags lhs, EncodeFlags rhs) {
+  return static_cast<EncodeFlags>(static_cast<uint32_t>(lhs) & static_cast<uint32_t>(rhs));
+}
+
+/*!
+ * \brief Per-call encoding controls.
+ *
+ * The neutral defaults preserve the historical behavior: do not add post-processor tokens and
+ * recognize all configured added tokens.
+ */
+struct EncodeOptions {
+  bool add_special_tokens{false};
+  EncodeFlags flags{EncodeFlags::kNone};
+};
+
+/*! \brief Stable categories for errors reported by the tokenizer API. */
+enum class TokenizerErrorCode {
+  kInvalidArgument,
+  kUnsupportedOperation,
+  kInternal,
+};
+
+/*!
+ * \brief Exception carrying an inspectable tokenizer failure category.
+ *
+ * Encoding errors originating in Rust are converted to this type after the C ABI returns, so no
+ * exception or Rust panic unwinds through the language boundary.
+ */
+class TokenizerError : public std::runtime_error {
+ public:
+  TokenizerError(TokenizerErrorCode code, const std::string& message)
+      : std::runtime_error(message), code_(code) {}
+
+  TokenizerErrorCode code() const noexcept { return code_; }
+
+ private:
+  TokenizerErrorCode code_;
+};
 
 /*!
  * \brief a universal tokenizer that loads
@@ -25,24 +82,23 @@ class Tokenizer {
   /*!
    * \brief Encode text into ids.
    * \param text The input text.
+   * \param options Per-call post-processing and added-token controls.
    * \returns The encoded token ids.
+   * \throws TokenizerError for invalid flags, unsupported policies, or backend failures.
    */
-  virtual std::vector<int32_t> Encode(const std::string& text) = 0;
+  std::vector<int32_t> Encode(const std::string& text) const;
+  std::vector<int32_t> Encode(const std::string& text, const EncodeOptions& options) const;
 
   /*!
    * \brief Encode a batch of texts into ids.
    * \param texts The input texts.
+   * \param options Controls shared by every sequence in the batch.
    * \returns The encoded token ids.
+   * \throws TokenizerError for invalid flags, unsupported policies, or backend failures.
    */
-  virtual std::vector<std::vector<int32_t>> EncodeBatch(const std::vector<std::string>& texts) {
-    // Fall back when the derived class does not implement this function.
-    std::vector<std::vector<int32_t>> ret;
-    ret.reserve(texts.size());
-    for (const auto& text : texts) {
-      ret.push_back(Encode(text));
-    }
-    return ret;
-  }
+  std::vector<std::vector<int32_t>> EncodeBatch(const std::vector<std::string>& texts) const;
+  std::vector<std::vector<int32_t>> EncodeBatch(const std::vector<std::string>& texts,
+                                                const EncodeOptions& options) const;
 
   /*!
    * \brief Decode token ids into text.
@@ -115,6 +171,26 @@ class Tokenizer {
    * \return The created tokenizer.
    */
   static std::unique_ptr<Tokenizer> FromBlobRWKVWorld(const std::string& model_blob);
+
+ protected:
+  /*!
+   * \brief Backend-specific single-input implementation called after common validation.
+   *
+   * Implementations may assume the flags are known and supported by the backend.
+   */
+  virtual std::vector<int32_t> EncodeImpl(const std::string& text,
+                                          const EncodeOptions& options) const = 0;
+
+  /*!
+   * \brief Backend-specific batch implementation called after common validation.
+   *
+   * The default preserves backend semantics by invoking EncodeImpl for every sequence.
+   */
+  virtual std::vector<std::vector<int32_t>> EncodeBatchImpl(const std::vector<std::string>& texts,
+                                                            const EncodeOptions& options) const;
+
+  /*! \brief Whether this backend implements non-default added-token ignore flags. */
+  virtual bool SupportsEncodeFlags() const noexcept { return false; }
 };
 
 }  // namespace tokenizers

@@ -16,7 +16,11 @@ class SentencePieceTokenizer : public Tokenizer {
     sentence_piece_.LoadFromSerializedProto(model_blob);
   }
 
-  std::vector<int32_t> Encode(const std::string& text) final {
+  std::vector<int32_t> EncodeImpl(const std::string& text,
+                                  const EncodeOptions& options) const final {
+    // SentencePiece has no equivalent post-processor setting. Common dispatch rejects any
+    // non-default added-token policy before this backend is entered.
+    (void)options;
     std::vector<int32_t> tokens;
     sentence_piece_.Encode(text, &tokens).IgnoreError();
     return tokens;
